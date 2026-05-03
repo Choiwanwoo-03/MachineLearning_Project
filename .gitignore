@@ -1,0 +1,22 @@
+# Python 관련
+__pycache__/
+*.pyc
+.venv/
+env/
+
+# Jupyter Notebook 관련
+.ipynb_checkpoints/
+
+# 데이터 및 모델 (보안 및 용량 관리)
+data/
+models/
+*.xlsx
+*.csv
+*.json
+
+# 환경 변수 및 API 키
+.env
+
+# IDE 관련
+.vscode/
+.idea/
