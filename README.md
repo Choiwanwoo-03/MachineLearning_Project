@@ -38,3 +38,20 @@
 - `notebooks/`: EDA(탐색적 데이터 분석) 및 실험용 Jupyter Notebook
 - `src/`: 전처리, 학습, 추론을 위한 모듈형 파이썬 스크립트
 - `models/`: 학습이 완료된 모델 저장 파일 (.pkl, .h5)
+
+## 📁 6. 상세 폴더 구조 및 용도 (Directory Details)
+
+조원들은 각 파일의 성격에 맞는 폴더에 결과물을 저장하여 협업 효율을 유지해야 합니다.
+
+| 폴더명 | 용도 및 설명 | 주요 포함 파일 예시 |
+| :--- | :--- | :--- |
+| **`data/raw/`** | 수집된 원본 데이터를 보관합니다. (수정 금지) | `데이터셋 종류.xlsx`, 공공데이터 API 원본 |
+| **`data/processed/`** | 전처리 및 피처 엔지니어링이 완료된 학습용 데이터입니다. | `train_v1.csv`, `processed_features.parquet` |
+| **`data/external/`** | 모델 성능 향상을 위한 외부 지표를 보관합니다. | 금리 데이터, 환율 변동 내역(JPY/KRW 등) |
+| **`notebooks/`** | 실험적인 EDA(탐색적 데이터 분석) 및 시각화용 파일입니다. | `01_eda_initial.ipynb`, `02_feature_analysis.ipynb` |
+| **`src/`** | 재사용 가능한 모듈형 파이썬 스크립트를 관리합니다. | `data_loader.py`, `preprocessing.py`, `model_train.py` |
+| **`models/`** | 학습이 완료된 모델 파일 스냅샷을 저장합니다. | `apt_model_v1.pkl`, `hyperparameters.json` |
+| **`config/`** | 하이퍼파라미터 설정 및 API 인증 키 등을 관리합니다. | `config.yaml`, `api_keys.json` |
+| **`reports/`** | 최종 분석 결과 보고서 및 시각화 그래프를 보관합니다. | `performance_report.pdf`, `feature_importance.png` |
+
+---
