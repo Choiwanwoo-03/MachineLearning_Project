@@ -7,9 +7,14 @@ env/
 # Jupyter Notebook 관련
 .ipynb_checkpoints/
 
-# 데이터 및 모델 (보안 및 용량 관리)
-data/
-models/
+# 폴더 내부의 모든 파일을 무시하되
+data/**/*
+models/**/*
+
+# .gitkeep 파일은 예외적으로 추적하도록 설정 (느낌표 '!' 활용)
+!**/ .gitkeep
+
+# 특정 확장자 무시 (보안 및 용량 관리)
 *.xlsx
 *.csv
 *.json
