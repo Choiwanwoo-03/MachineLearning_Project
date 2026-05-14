@@ -1,27 +1,15 @@
-# Python 관련
+# 가상환경
+venv/
+.venv/
+
+# 데이터 및 모델 (용량이 커서 올리지 않음)
+data/
+models/*.pkl
+models/*.h5
+
+# 파이썬 캐시
 __pycache__/
 *.pyc
-.venv/
-env/
 
-# Jupyter Notebook 관련
-.ipynb_checkpoints/
-
-# 폴더 내부의 모든 파일을 무시하되
-data/**/*
-models/**/*
-
-# .gitkeep 파일은 예외적으로 추적하도록 설정 (느낌표 '!' 활용)
-!**/ .gitkeep
-
-# 특정 확장자 무시 (보안 및 용량 관리)
-*.xlsx
-*.csv
-*.json
-
-# 환경 변수 및 API 키
-.env
-
-# IDE 관련
-.vscode/
-.idea/
+# OS 관련 설정
+.DS_Store
