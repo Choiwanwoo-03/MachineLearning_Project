@@ -65,40 +65,43 @@
 ---
 
 ## 📁 6. 저장소 폴더 구조
+
+~~~
 MachineLearning_Project/
 │
-├── README.md ← main 브랜치에서만 관리
+├── README.md                          ← main 브랜치에서만 관리
 │
-├── preprocess/ ← 전처리 코드 (브랜치별 분리)
-│ ├── 교육_학군/ ← 병선 브랜치 담당
-│ ├── 단지_내부/ ← 한초아 브랜치 담당
-│ ├── 거시_정책/ ← 완우 브랜치 담당
-│ └── 교통_생활/ ← 한결 브랜치 담당
+├── preprocess/                        ← 전처리 코드 (브랜치별 분리)
+│   ├── 교육_학군/                     ← 병선 브랜치 담당
+│   ├── 단지_내부/                     ← 한초아 브랜치 담당
+│   ├── 거시_정책/                     ← 완우 브랜치 담당
+│   └── 교통_생활/                     ← 한결 브랜치 담당
 │
-├── pipeline/ ← 공통 파이프라인 (main에서 통합)
-│ ├── suwon_pipeline.py
-│ ├── train.py
-│ └── validate.py
+├── pipeline/                          ← 공통 파이프라인 (main에서 통합)
+│   ├── suwon_pipeline.py
+│   ├── train.py
+│   └── validate.py
 │
-├── model/ ← 모델 학습 코드
-│ ├── regressor.py
-│ └── classifier.py
+├── model/                             ← 모델 학습 코드
+│   ├── regressor.py
+│   └── classifier.py
 │
-├── viz/ ← 시각화
-│ ├── 교육_학군/ ← 병선
-│ ├── 단지_내부/ ← 한초아
-│ ├── 거시_정책/ ← 완우
-│ └── 교통_생활/ ← 한결
+├── viz/                               ← 시각화
+│   ├── 교육_학군/                     ← 병선
+│   ├── 단지_내부/                     ← 한초아
+│   ├── 거시_정책/                     ← 완우
+│   └── 교통_생활/                     ← 한결
 │
-├── data/ ← .gitignore 처리 (대용량 파일 제외)
-│ ├── raw/ ← 원본 데이터 (수정 금지)
-│ ├── processed/ ← 전처리 완료 데이터
-│ ├── features/ ← 피처 엔지니어링 결과
-│ ├── models/ ← 학습된 모델 파일 (.pkl)
-│ ├── results/ ← 예측 결과 및 평가 지표
-│ └── figures/ ← 시각화 출력 이미지
+├── data/                              ← .gitignore 처리 (대용량 파일 제외)
+│   ├── raw/                           ← 원본 데이터 (수정 금지)
+│   ├── processed/                     ← 전처리 완료 데이터
+│   ├── features/                      ← 피처 엔지니어링 결과
+│   ├── models/                        ← 학습된 모델 파일 (.pkl)
+│   ├── results/                       ← 예측 결과 및 평가 지표
+│   └── figures/                       ← 시각화 출력 이미지
 │
 └── .gitignore
+~~~
 
 ---
 
