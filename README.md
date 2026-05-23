@@ -58,7 +58,7 @@
 | `병선` | 병선 | 교육 학군 | `preprocess/교육_학군/`, `viz/교육_학군/` |
 | `한초아` | 한초아 | 단지 내부 | `preprocess/단지_내부/`, `viz/단지_내부/` |
 | `완우` | 완우 | 거시 정책 | `preprocess/거시_정책/`, `viz/거시_정책/` |
-| `한결` | 한결 | 교통 인프라 + 생활 환경 | `preprocess/교통_생활/`, `viz/교통_생활/` |
+| `한결` | 한결 | 교통 인프라 + 생활 환경 | `preprocess/교통_인프라/`, `preprocess/생활_환경/` `viz/교통_인프라/`, `viz/생활_환경/` |
 
 > **규칙:** 각자 담당 폴더만 수정합니다. `pipeline/`과 `model/`은 `main` 브랜치에서만 관리합니다.
 
@@ -75,7 +75,8 @@ MachineLearning_Project/
 │   ├── 교육_학군/                     ← 병선 브랜치 담당
 │   ├── 단지_내부/                     ← 한초아 브랜치 담당
 │   ├── 거시_정책/                     ← 완우 브랜치 담당
-│   └── 교통_생활/                     ← 한결 브랜치 담당
+│   ├── 생활_환경/                     ← 한결 브랜치 담당
+│   └── 교통_인프라/                   ← 한결 브랜치 담당
 │
 ├── pipeline/                          ← 공통 파이프라인 (main에서 통합)
 │   ├── suwon_pipeline.py
@@ -90,7 +91,8 @@ MachineLearning_Project/
 │   ├── 교육_학군/                     ← 병선
 │   ├── 단지_내부/                     ← 한초아
 │   ├── 거시_정책/                     ← 완우
-│   └── 교통_생활/                     ← 한결
+│   ├── 생활_환경/                     ← 한결
+│   └── 교통_인프라/                   ← 한결
 │
 ├── data/                              ← .gitignore 처리 (대용량 파일 제외)
 │   ├── raw/                           ← 원본 데이터 (수정 금지)
@@ -112,7 +114,8 @@ MachineLearning_Project/
 | **`preprocess/교육_학군/`** | 학교·학원가 거리 계산 및 학군 피처 생성 | `preprocess_school.py` |
 | **`preprocess/단지_내부/`** | 전용면적·층수·노후도 등 단지 내부 피처 생성 | `preprocess_complex.py` |
 | **`preprocess/거시_정책/`** | 기준금리·LTV 규제 등 거시 변수 전처리 | `preprocess_macro.py` |
-| **`preprocess/교통_생활/`** | 지하철·편의점·병원 거리 계산 | `preprocess_transport.py` |
+| **`preprocess/교통_인프라/`** | 지하철·버스정류장 등 거리 계산 | `preprocess_transport.py` |
+| **`preprocess/생활_환경/`** | 편의점·병원 등 거리 계산 |
 | **`pipeline/`** | 전체 학습 파이프라인 (전처리 → 학습 → 평가) | `suwon_pipeline.py`, `train.py` |
 | **`model/`** | 회귀 / 분류 모델 정의 및 학습 코드 | `regressor.py`, `classifier.py` |
 | **`viz/`** | 카테고리별 시각화 코드 | `viz_*.py` |
