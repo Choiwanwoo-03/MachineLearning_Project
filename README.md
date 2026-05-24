@@ -111,10 +111,10 @@ MachineLearning_Project/
 
 | 폴더명 | 용도 및 설명 | 주요 포함 파일 예시 |
 | :--- | :--- | :--- |
-| **`preprocess/교육_학군/`** | 학교·학원가 거리 계산 및 학군 피처 생성 | `preprocess_school.py` |
-| **`preprocess/단지_내부/`** | 전용면적·층수·노후도 등 단지 내부 피처 생성 | `preprocess_complex.py` |
-| **`preprocess/거시_정책/`** | 기준금리·LTV 규제 등 거시 변수 전처리 | `preprocess_macro.py` |
-| **`preprocess/교통_인프라/`** | 지하철·버스정류장 등 거리 계산 | `preprocess_transport.py` |
+| **`preprocess/교육_학군/`** | 학교·학원가 거리 계산 및 학군 피처 생성 |
+| **`preprocess/단지_내부/`** | 전용면적·층수·노후도 등 단지 내부 피처 생성 |
+| **`preprocess/거시_정책/`** | 기준금리·LTV 규제 등 거시 변수 전처리 |
+| **`preprocess/교통_인프라/`** | 지하철·버스정류장 등 거리 계산 |
 | **`preprocess/생활_환경/`** | 편의점·병원 등 거리 계산 |
 | **`pipeline/`** | 전체 학습 파이프라인 (전처리 → 학습 → 평가) | `suwon_pipeline.py`, `train.py` |
 | **`model/`** | 회귀 / 분류 모델 정의 및 학습 코드 | `regressor.py`, `classifier.py` |
