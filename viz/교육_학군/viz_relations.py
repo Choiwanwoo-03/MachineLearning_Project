@@ -1,11 +1,3 @@
-"""
-교육·학군 변수 EDA 시각화
-========================
-
-원본 노트북의 "10. 데이터 분석 및 시각화" 셀을 분리한 파일입니다.
-입력 파일: 수원시_아파트_교육인프라_최종데이터.csv
-"""
-
 from __future__ import annotations
 
 from pathlib import Path
