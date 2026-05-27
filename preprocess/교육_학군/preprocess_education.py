@@ -1,303 +1,376 @@
+"""
+========================================================================
+교육·학군 피처 전처리 모듈
+========================================================================
+담당: 병선
+
+수집 대상:
+    P1_3: 전국 초중등학교 위치 (data.go.kr)
+    P1_4: 전국 학원·교습소 현황 (data.go.kr)
+
+생성 피처:
+    school_cnt          : 반경 500m 내 학교 수 (초·중·고 합산)
+    school_nearest_m    : 가장 가까운 학교까지 직선거리 (m)
+    school_score        : 학교 접근성 점수 (0~100)
+    elem_cnt            : 반경 500m 내 초등학교 수
+    middle_cnt          : 반경 500m 내 중학교 수
+    high_cnt            : 반경 500m 내 고등학교 수
+    academy_cnt_t       : 거래 시점 기준 구 단위 누적 학원 수
+
+실행 방법:
+    python preprocess_education.py            # 수집 + 피처 생성
+    python preprocess_education.py --collect  # 수집만
+    python preprocess_education.py --process  # 피처 생성만
+
+연동:
+    - 입력: data/raw/edu/schools_national.csv
+            data/raw/edu/academies_national.csv
+    - 출력: data/raw/edu/suwon_schools.parquet
+            data/raw/edu/suwon_academies.parquet
+    - 활용: suwon_pipeline.py run_pipeline(phase="features") 에서 자동 머지
+========================================================================
+"""
+
 from __future__ import annotations
 
-import os
-import time
-import requests
-import xml.etree.ElementTree as ET
+import logging
+import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+# ── 경로 설정 ────────────────────────────────────────────────────────
+_HERE = Path(__file__).resolve().parent          # preprocess/교육_학군/
+_ROOT = _HERE.parent.parent                      # 프로젝트 루트
+for _p in [str(_ROOT / "pipeline"), str(_ROOT / "model")]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
-SERVICE_KEY = os.getenv("SERVICE_KEY", "")
-KAKAO_REST_API_KEY = os.getenv("KAKAO_REST_API_KEY", "")
+from suwon_pipeline import (
+    RAW_DIR,
+    PROCESSED_DIR,
+    read_csv_smart,
+    log_score,
+)
 
-SUWON_LAWD_CODES = {
-    "수원시 장안구": "41111",
-    "수원시 권선구": "41113",
-    "수원시 팔달구": "41115",
-    "수원시 영통구": "41117",
-}
+EDU_DIR = RAW_DIR / "edu"
+EDU_DIR.mkdir(parents=True, exist_ok=True)
 
-DEFAULT_TRADE_FILE = "수원시_아파트_실거래가_수집.csv"
-DEFAULT_APT_GEO_FILE = "수원시_아파트_좌표포함.csv"
-DEFAULT_ACADEMY_GEO_FILE = "수원시_학원_좌표포함.csv"
-DEFAULT_OUTPUT_FILE = "수원시_아파트_교육인프라_최종데이터.csv"
-
-
-def clean_price(x):
-    """거래금액 문자열에서 쉼표를 제거하고 숫자로 변환한다."""
-    if pd.isna(x):
-        return np.nan
-    x = str(x).replace(",", "").strip()
-    return pd.to_numeric(x, errors="coerce")
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
 
 
-def get_apt_trade_data(service_key: str, lawd_cd: str, deal_ym: str, page_no: int = 1, num_rows: int = 1000) -> pd.DataFrame:
-    """국토교통부 아파트 실거래가 API를 호출한다."""
-    url = "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
-    params = {
-        "serviceKey": service_key,
-        "LAWD_CD": lawd_cd,
-        "DEAL_YMD": deal_ym,
-        "pageNo": page_no,
-        "numOfRows": num_rows,
-    }
-    response = requests.get(url, params=params, timeout=30)
-    response.raise_for_status()
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 1. 데이터 수집
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    root = ET.fromstring(response.content)
-    items = root.findall(".//item")
-    rows = []
-    for item in items:
-        row = {child.tag: child.text for child in item}
-        rows.append(row)
-    return pd.DataFrame(rows)
+def collect_schools() -> pd.DataFrame:
+    """
+    [P1_3] 전국 초중등학교 위치 수집 → 수원시 필터링 후 저장
+    ──────────────────────────────────────────────────────────
+    URL:    https://www.data.go.kr/data/15021148/standard.do
+    API:    https://open.neis.go.kr (나이스 교육정보)
+    제공:   학교ID · 학교명 · 학교급 · 설립일자 · 운영상태 · 위도 · 경도
+    비용:   무료
 
+    활용 예시:
+        # 2013년 거래 기준 반경 500m 초등학교 수
+        schools_2013 = schools[schools["설립일자"] <= "2013-12-31"]
+        schools_active = schools_2013[schools_2013["운영상태"] == "운영"]
 
-def collect_suwon_apt_trade_data(service_key: str = SERVICE_KEY, start_year: int = 2020, end_year: int = 2024) -> pd.DataFrame:
-    """수원시 4개 구의 아파트 실거래가를 수집한다."""
-    if not service_key:
-        raise ValueError("SERVICE_KEY 환경변수가 필요합니다.")
-
-    all_data = []
-    for district, lawd_cd in SUWON_LAWD_CODES.items():
-        for year in range(start_year, end_year + 1):
-            for month in range(1, 13):
-                deal_ym = f"{year}{month:02d}"
-                print(f"수집 중: {district} {deal_ym}")
-                try:
-                    df = get_apt_trade_data(service_key, lawd_cd, deal_ym)
-                    if not df.empty:
-                        df["구"] = district
-                        df["DEAL_YM"] = deal_ym
-                        all_data.append(df)
-                except Exception as e:
-                    print(f"수집 실패: {district} {deal_ym} / {e}")
-                time.sleep(0.2)
-    return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-
-
-def preprocess_trade_data(apt: pd.DataFrame) -> pd.DataFrame:
-    """실거래가 데이터의 핵심 컬럼을 정리한다."""
-    apt = apt.copy()
-    if "거래금액" in apt.columns:
-        apt["거래금액"] = apt["거래금액"].apply(clean_price)
-
-    for col in ["년", "월", "일", "전용면적"]:
-        if col in apt.columns:
-            apt[col] = pd.to_numeric(apt[col], errors="coerce")
-
-    if {"년", "월", "일"}.issubset(apt.columns):
-        apt["거래일자"] = pd.to_datetime(
-            apt["년"].astype("Int64").astype(str) + "-" +
-            apt["월"].astype("Int64").astype(str) + "-" +
-            apt["일"].astype("Int64").astype(str),
-            errors="coerce",
+    반환 컬럼:
+        학교ID, 학교명, 학교급구분, 설립일자, 운영상태, 위도, 경도
+    """
+    csv_path = EDU_DIR / "schools_national.csv"
+    if not csv_path.exists():
+        logging.warning(
+            "[P1_3] 학교 데이터 미존재\n"
+            "       data.go.kr/data/15021148/standard.do 에서 CSV 다운로드 후\n"
+            "       %s 에 저장 후 재실행", csv_path
         )
+        return pd.DataFrame()
 
-    address_parts = []
-    for col in ["구", "법정동", "지번"]:
-        if col in apt.columns:
-            address_parts.append(apt[col].astype(str))
-    if address_parts:
-        apt["주소"] = "경기도 수원시 " + address_parts[0]
-        for part in address_parts[1:]:
-            apt["주소"] = apt["주소"] + " " + part
+    df = read_csv_smart(csv_path)
 
-    return apt
+    # 수원시 필터
+    addr_col = "소재지도로명주소" if "소재지도로명주소" in df.columns else "도로명주소"
+    if addr_col in df.columns:
+        df = df[df[addr_col].astype(str).str.contains("수원", na=False)].copy()
 
-
-def geocode_kakao(address: str, kakao_key: str = KAKAO_REST_API_KEY, debug: bool = False):
-    """카카오 Local API로 주소를 위도/경도로 변환한다."""
-    if not kakao_key:
-        raise ValueError("KAKAO_REST_API_KEY 환경변수가 필요합니다.")
-
-    url = "https://dapi.kakao.com/v2/local/search/address.json"
-    headers = {"Authorization": f"KakaoAK {kakao_key}"}
-    params = {"query": address}
-
-    response = requests.get(url, headers=headers, params=params, timeout=10)
-    if debug:
-        print("주소:", address)
-        print("HTTP 상태코드:", response.status_code)
-        print(response.text[:300])
-
-    if response.status_code != 200:
-        return np.nan, np.nan
-
-    documents = response.json().get("documents", [])
-    if not documents:
-        return np.nan, np.nan
-
-    x = documents[0].get("x")
-    y = documents[0].get("y")
-    return float(y), float(x)
+    out = EDU_DIR / "suwon_schools.parquet"
+    df.to_parquet(out, index=False)
+    logging.info("[P1_3] 수원 학교: %d개 저장 → %s", len(df), out)
+    return df
 
 
-def add_coordinates_to_apartments(apt: pd.DataFrame, output_file: str = DEFAULT_APT_GEO_FILE) -> pd.DataFrame:
-    """아파트 주소에 좌표를 붙이고 캐시 파일로 저장한다."""
-    if Path(output_file).exists():
-        cached = pd.read_csv(output_file)
-        if {"위도", "경도"}.issubset(cached.columns):
-            return cached
+def collect_academies() -> pd.DataFrame:
+    """
+    [P1_4] 전국 학원·교습소 현황 — 수원 필터링 후 저장
+    ──────────────────────────────────────────────────────
+    URL:    https://www.data.go.kr/data/15096277/standard.do
+    제공:   학원명 · 등록일자 · 폐원일자 · 등록상태 · 분야 · 위도 · 경도
+    비용:   무료
+    핵심:   등록일자 + 폐원일자 → 연도별 운영 학원 수 역산 가능
 
-    apt = apt.copy()
-    latitudes, longitudes = [], []
-    for i, address in enumerate(apt["주소"]):
-        lat, lon = geocode_kakao(address)
-        latitudes.append(lat)
-        longitudes.append(lon)
-        if i % 20 == 0:
-            print(f"아파트 좌표 변환 중: {i}/{len(apt)}")
-        time.sleep(0.1)
+    반환 컬럼:
+        학원명, 등록일자, 폐원일자, 등록상태, 소재지도로명주소, ...
+    """
+    csv_path = EDU_DIR / "academies_national.csv"
+    if not csv_path.exists():
+        logging.warning(
+            "[P1_4] 학원 데이터 미존재\n"
+            "       data.go.kr/data/15096277/standard.do 에서 CSV 다운로드 후\n"
+            "       %s 에 저장 후 재실행", csv_path
+        )
+        return pd.DataFrame()
 
-    apt["위도"] = latitudes
-    apt["경도"] = longitudes
-    apt.to_csv(output_file, index=False, encoding="utf-8-sig")
-    return apt
+    df = read_csv_smart(csv_path, dtype=str)
 
+    addr_candidates = ["소재지도로명주소", "도로명주소", "행정구역명"]
+    addr_col = next((c for c in addr_candidates if c in df.columns), None)
+    if addr_col is not None:
+        df = df[df[addr_col].astype(str).str.contains("수원", na=False)].copy()
 
-def load_suwon_schools(school_file: str = "전국초중등학교위치표준데이터.csv") -> pd.DataFrame:
-    """전국 학교 데이터에서 수원시 학교만 추출한다."""
-    school = pd.read_csv(school_file, encoding="cp949")
-    school["위도"] = pd.to_numeric(school["위도"], errors="coerce")
-    school["경도"] = pd.to_numeric(school["경도"], errors="coerce")
-    school = school.dropna(subset=["위도", "경도"]).copy()
-
-    school["주소통합"] = (
-        school.get("소재지도로명주소", "").astype(str) + " " +
-        school.get("소재지지번주소", "").astype(str)
-    )
-    school_suwon = school[school["주소통합"].str.contains("수원시", na=False)].copy()
-    return school_suwon
+    out = EDU_DIR / "suwon_academies.parquet"
+    df.to_parquet(out, index=False)
+    logging.info("[P1_4] 수원 학원·교습소: %d개 (전체 이력) → %s", len(df), out)
+    return df
 
 
-def haversine(lat1, lon1, lat2, lon2):
-    """위도/경도 두 지점 사이의 거리(m)를 계산한다."""
-    R = 6371000
-    lat1 = np.radians(lat1)
-    lon1 = np.radians(lon1)
-    lat2 = np.radians(lat2)
-    lon2 = np.radians(lon2)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 2. 거리 계산 유틸
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def haversine_matrix(lat1: np.ndarray, lon1: np.ndarray,
+                     lat2: np.ndarray, lon2: np.ndarray,
+                     detour: float = 1.3) -> np.ndarray:
+    """
+    (N,) × (M,) 두 좌표 집합 간 Haversine 거리 행렬 반환 → shape (N, M) [미터]
+    detour: 직선거리 → 도로거리 보정계수 (기본 1.3 = 도심 평균)
+    """
+    R = 6_371_000.0
+    lat1 = np.radians(lat1)[:, None]
+    lon1 = np.radians(lon1)[:, None]
+    lat2 = np.radians(lat2)[None, :]
+    lon2 = np.radians(lon2)[None, :]
     dlat = lat2 - lat1
     dlon = lon2 - lon1
     a = np.sin(dlat / 2) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2) ** 2
-    c = 2 * np.arcsin(np.sqrt(a))
-    return R * c
+    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a)) * detour
 
 
-def add_school_features(apt: pd.DataFrame, school_suwon: pd.DataFrame, radius_m: int = 500) -> pd.DataFrame:
-    """아파트별 학교 거리/개수 파생변수를 생성한다."""
-    apt = apt.dropna(subset=["주소", "위도", "경도"]).copy()
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 3. 학교 접근성 피처 생성
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    elem_nearest, elem_cnt, mid_cnt, high_cnt = [], [], [], []
-    for _, row in apt.iterrows():
-        distances = haversine(row["위도"], row["경도"], school_suwon["위도"], school_suwon["경도"])
-        temp = school_suwon.copy()
-        temp["거리_m"] = distances
+def calc_school_features(apt_df: pd.DataFrame,
+                         schools_df: pd.DataFrame,
+                         radius_m: float = 500.0) -> pd.DataFrame:
+    """
+    아파트 단지별 학교 접근성 피처 계산
 
-        elem = temp[temp["학교급구분"].astype(str).str.contains("초", na=False)]
-        middle = temp[temp["학교급구분"].astype(str).str.contains("중", na=False)]
-        high = temp[temp["학교급구분"].astype(str).str.contains("고", na=False)]
+    Parameters
+    ----------
+    apt_df     : 단지 좌표 포함 DataFrame (apt_id, lat, lon 필수)
+    schools_df : 학교 위치 DataFrame (학교급구분, 위도, 경도 필수)
+    radius_m   : 반경 기준 (기본 500m)
 
-        elem_nearest.append(elem["거리_m"].min() if not elem.empty else np.nan)
-        elem_cnt.append((elem["거리_m"] <= radius_m).sum())
-        mid_cnt.append((middle["거리_m"] <= radius_m).sum())
-        high_cnt.append((high["거리_m"] <= radius_m).sum())
+    Returns
+    -------
+    DataFrame (apt_id 기준 1행):
+        school_nearest_m  : 초중고 전체 기준 최근 학교 거리 (m)
+        school_cnt        : 반경 내 전체 학교 수
+        school_score      : 접근성 점수 (0~100)
+        elem_cnt          : 반경 내 초등학교 수
+        middle_cnt        : 반경 내 중학교 수
+        high_cnt          : 반경 내 고등학교 수
+    """
+    empty = pd.DataFrame(columns=[
+        "apt_id", "school_nearest_m", "school_cnt", "school_score",
+        "elem_cnt", "middle_cnt", "high_cnt"
+    ])
+    if schools_df.empty or apt_df.empty:
+        return empty
 
-    apt["elem_nearest_m"] = elem_nearest
-    apt["elem_cnt_500m"] = elem_cnt
-    apt["mid_cnt_500m"] = mid_cnt
-    apt["high_cnt_500m"] = high_cnt
-    return apt
+    lat_col = "위도" if "위도" in schools_df.columns else "lat"
+    lon_col = "경도" if "경도" in schools_df.columns else "lon"
+    lv_col  = "학교급구분" if "학교급구분" in schools_df.columns else "level"
 
+    sch = schools_df.dropna(subset=[lat_col, lon_col]).copy()
+    if sch.empty:
+        return empty
 
-def load_suwon_academies(academy_file: str = "전국학원및교습소표준데이터.csv") -> pd.DataFrame:
-    """전국 학원 데이터에서 수원시 학원만 추출한다."""
-    academy = pd.read_csv(academy_file, encoding="cp949")
-    if "도로명주소" not in academy.columns:
-        raise ValueError("학원 데이터에 도로명주소 컬럼이 없습니다.")
-    academy["주소"] = academy["도로명주소"].astype(str)
-    return academy[academy["주소"].str.contains("수원시", na=False)].copy()
+    apt_valid = apt_df.dropna(subset=["lat", "lon"]).copy()
+    if apt_valid.empty:
+        return empty
 
+    # 전체 학교 거리 행렬
+    dist_all = haversine_matrix(
+        apt_valid["lat"].to_numpy(dtype="float64"),
+        apt_valid["lon"].to_numpy(dtype="float64"),
+        sch[lat_col].to_numpy(dtype="float64"),
+        sch[lon_col].to_numpy(dtype="float64"),
+    )  # shape (N_apt, N_school)
 
-def add_coordinates_to_academies(academy_suwon: pd.DataFrame, output_file: str = DEFAULT_ACADEMY_GEO_FILE) -> pd.DataFrame:
-    """학원 주소에 좌표를 붙이고 캐시 파일로 저장한다."""
-    if Path(output_file).exists():
-        cached = pd.read_csv(output_file)
-        if {"위도", "경도"}.issubset(cached.columns):
-            return cached
+    result = pd.DataFrame({"apt_id": apt_valid["apt_id"].to_numpy()})
+    result["school_nearest_m"] = dist_all.min(axis=1).astype("float32")
+    result["school_cnt"]       = (dist_all <= radius_m).sum(axis=1).astype("int16")
+    result["school_score"]     = log_score(pd.Series(result["school_nearest_m"]))
 
-    academy_suwon = academy_suwon.copy()
-    latitudes, longitudes = [], []
-    for i, address in enumerate(academy_suwon["주소"]):
-        lat, lon = geocode_kakao(address)
-        latitudes.append(lat)
-        longitudes.append(lon)
-        if i % 50 == 0:
-            print(f"학원 좌표 변환 중: {i}/{len(academy_suwon)}")
-        time.sleep(0.1)
+    # 학교급별 분리
+    for level_name, kor_name in [("elem", "초등학교"), ("middle", "중학교"), ("high", "고등학교")]:
+        sch_lv = sch[sch[lv_col].astype(str).str.contains(kor_name, na=False)]
+        if sch_lv.empty:
+            result[f"{level_name}_cnt"] = 0
+            continue
+        dist_lv = haversine_matrix(
+            apt_valid["lat"].to_numpy(dtype="float64"),
+            apt_valid["lon"].to_numpy(dtype="float64"),
+            sch_lv[lat_col].to_numpy(dtype="float64"),
+            sch_lv[lon_col].to_numpy(dtype="float64"),
+        )
+        result[f"{level_name}_cnt"] = (dist_lv <= radius_m).sum(axis=1).astype("int16")
 
-    academy_suwon["위도"] = latitudes
-    academy_suwon["경도"] = longitudes
-    academy_suwon.to_csv(output_file, index=False, encoding="utf-8-sig")
-    return academy_suwon
-
-
-def add_academy_features(apt: pd.DataFrame, academy_suwon: pd.DataFrame, radius_m: int = 500) -> pd.DataFrame:
-    """거래시점 기준 반경 500m 학원 수를 생성한다."""
-    apt = apt.copy()
-    academy_suwon = academy_suwon.dropna(subset=["위도", "경도"]).copy()
-
-    if "등록일자" in academy_suwon.columns:
-        academy_suwon["등록일자"] = pd.to_datetime(academy_suwon["등록일자"], errors="coerce")
-    else:
-        academy_suwon["등록일자"] = pd.NaT
-
-    counts = []
-    for _, row in apt.iterrows():
-        target = academy_suwon
-        if "거래일자" in apt.columns and pd.notna(row.get("거래일자")):
-            target = academy_suwon[
-                academy_suwon["등록일자"].isna() | (academy_suwon["등록일자"] <= row["거래일자"])
-            ]
-        distances = haversine(row["위도"], row["경도"], target["위도"], target["경도"])
-        counts.append((distances <= radius_m).sum())
-
-    apt["academy_cnt_500m_t"] = counts
-    return apt
+    logging.info("[교육_학군] school_features 계산 완료: %d 단지", len(result))
+    return result
 
 
-def run_pipeline(
-    trade_file: str = DEFAULT_TRADE_FILE,
-    school_file: str = "전국초중등학교위치표준데이터.csv",
-    academy_file: str = "전국학원및교습소표준데이터.csv",
-    output_file: str = DEFAULT_OUTPUT_FILE,
-) -> pd.DataFrame:
-    """노트북 전처리 과정을 하나의 함수로 실행한다."""
-    if Path(trade_file).exists():
-        apt = pd.read_csv(trade_file)
-    else:
-        apt = collect_suwon_apt_trade_data()
-        apt.to_csv(trade_file, index=False, encoding="utf-8-sig")
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 4. 학원 시점별 카운트 피처 생성
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    apt = preprocess_trade_data(apt)
-    apt = add_coordinates_to_apartments(apt)
+def calc_academy_features(trades_df: pd.DataFrame,
+                          academies_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    거래 시점 기준 구(gu) 단위 누적 학원 수 계산
 
-    school_suwon = load_suwon_schools(school_file)
-    apt = add_school_features(apt, school_suwon)
+    Parameters
+    ----------
+    trades_df   : 거래 데이터 (_gu, ym 컬럼 필수)
+    academies_df: 학원 데이터 (등록일자 컬럼 필수)
 
-    academy_suwon = load_suwon_academies(academy_file)
-    academy_suwon = add_coordinates_to_academies(academy_suwon)
-    apt = add_academy_features(apt, academy_suwon)
+    Returns
+    -------
+    trades_df에 academy_cnt_t 컬럼 추가된 DataFrame
+    """
+    if academies_df.empty:
+        trades_df = trades_df.copy()
+        trades_df["academy_cnt_t"] = 0
+        return trades_df
 
-    apt.to_csv(output_file, index=False, encoding="utf-8-sig")
-    print("최종 저장 완료:", output_file)
-    print(apt.columns.tolist())
-    return apt
+    reg_col = next((c for c in ["등록일자", "개설일자", "설립일자"]
+                    if c in academies_df.columns), None)
+    gu_col  = next((c for c in ["소재지도로명주소", "도로명주소", "행정구역명"]
+                    if c in academies_df.columns), None)
 
+    if reg_col is None or gu_col is None:
+        logging.warning("[교육_학군] 학원 날짜/주소 컬럼 없음 → academy_cnt_t=0")
+        trades_df = trades_df.copy()
+        trades_df["academy_cnt_t"] = 0
+        return trades_df
+
+    ac = academies_df.copy()
+    ac["_ym_open"] = (pd.to_datetime(ac[reg_col], errors="coerce")
+                      .dt.strftime("%Y%m"))
+    ac["_gu"] = ac[gu_col].astype(str).str.extract(r"(장안구|권선구|팔달구|영통구)")
+
+    # 구별·ym별 누적 학원 수
+    ac_valid = ac.dropna(subset=["_ym_open", "_gu"])
+    cumcount = (
+        ac_valid.groupby(["_gu", "_ym_open"])
+        .size()
+        .groupby(level=0)
+        .cumsum()
+        .reset_index(name="academy_cnt_t")
+    )
+    cumcount.rename(columns={"_ym_open": "ym"}, inplace=True)
+
+    df = trades_df.copy()
+    df["ym"] = df["ym"].astype(str)
+    df = df.merge(cumcount, on=["_gu", "ym"], how="left")
+    df["academy_cnt_t"] = (df.groupby("_gu", observed=True)["academy_cnt_t"]
+                           .ffill().fillna(0).astype("int32"))
+
+    logging.info("[교육_학군] academy_cnt_t 계산 완료: mean=%.1f, max=%d",
+                 df["academy_cnt_t"].mean(), df["academy_cnt_t"].max())
+    return df
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# 5. 전체 실행 진입점
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def run_education_preprocess(collect: bool = True, process: bool = True) -> None:
+    """
+    교육_학군 전처리 전체 실행
+
+    1. collect=True : 학교·학원 CSV → parquet 변환
+    2. process=True : suwon_trades_clean.parquet 에 교육 피처 추가
+                      → data/processed/suwon_trades_edu.parquet 저장
+    """
+    if collect:
+        logging.info("=== [교육_학군] 수집 단계 시작 ===")
+        collect_schools()
+        collect_academies()
+
+    if process:
+        logging.info("=== [교육_학군] 피처 생성 단계 시작 ===")
+
+        clean_path = PROCESSED_DIR / "suwon_trades_clean.parquet"
+        if not clean_path.exists():
+            logging.error("suwon_trades_clean.parquet 없음. pipeline/train.py 먼저 실행 필요.")
+            return
+
+        df = pd.read_parquet(clean_path)
+
+        # 학교 피처
+        schools_path = EDU_DIR / "suwon_schools.parquet"
+        if schools_path.exists():
+            schools_df = pd.read_parquet(schools_path)
+            # apt_df 구성 (단지별 대표 좌표)
+            if "lat" in df.columns and "lon" in df.columns and "apt_id" in df.columns:
+                apt_df = (df.groupby("apt_id", observed=True)[["lat", "lon"]]
+                          .mean().reset_index())
+                school_feats = calc_school_features(apt_df, schools_df)
+                df = df.merge(school_feats, on="apt_id", how="left")
+                logging.info("[교육_학군] 학교 피처 머지 완료: %s", list(school_feats.columns[1:]))
+            else:
+                logging.warning("[교육_학군] apt_id/lat/lon 컬럼 없어 학교 피처 건너뜀")
+        else:
+            logging.warning("[교육_학군] suwon_schools.parquet 없음 → collect_schools() 먼저 실행")
+
+        # 학원 피처
+        academies_path = EDU_DIR / "suwon_academies.parquet"
+        if academies_path.exists():
+            academies_df = pd.read_parquet(academies_path)
+            df = calc_academy_features(df, academies_df)
+        else:
+            logging.warning("[교육_학군] suwon_academies.parquet 없음 → collect_academies() 먼저 실행")
+            df["academy_cnt_t"] = 0
+
+        out = PROCESSED_DIR / "suwon_trades_edu.parquet"
+        df.to_parquet(out, index=False)
+        logging.info("[교육_학군] 저장 완료 → %s (%d rows x %d cols)", out, *df.shape)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# CLI
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 if __name__ == "__main__":
-    run_pipeline()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="교육_학군 전처리 모듈")
+    parser.add_argument("--collect", action="store_true",
+                        help="학교·학원 CSV → parquet 수집만 실행")
+    parser.add_argument("--process", action="store_true",
+                        help="피처 생성만 실행 (parquet 이미 존재해야 함)")
+    args = parser.parse_args()
+
+    if args.collect and not args.process:
+        run_education_preprocess(collect=True, process=False)
+    elif args.process and not args.collect:
+        run_education_preprocess(collect=False, process=True)
+    else:
+        run_education_preprocess(collect=True, process=True)
