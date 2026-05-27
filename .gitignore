@@ -20,6 +20,9 @@ data/models/
 *.h5
 *.pt
 *.pth
+# 단, 소형 파라미터 JSON은 예외
+!data/models/lgbm_best_params.json
+!data/models/year_trend.json
 
 # 시각화 출력 (재생성 가능)
 data/figures/
